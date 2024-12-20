@@ -41,7 +41,7 @@ resource "aws_subnet" "project_public_subnet" {
   vpc_id                  = aws_vpc.project_vpc.id
   cidr_block              = "10.123.1.0/24"
   map_public_ip_on_launch = true
-  availability_zone       = "ap-south-1a"
+  availability_zone       = "us-east-1a"
 
   tags = {
     Name = "project"
@@ -109,9 +109,9 @@ resource "aws_security_group" "Jenkins-sg" {
 }
 
 resource "aws_instance" "web" {
-  ami                    = "ami-0f5ee92e2d63afc18"
+  ami                    = "ami-0e2c8caa4b6378d8c"
   instance_type          = "t2.large"
-  key_name               = "EC2-key"
+  key_name               = "vu.pem"
   vpc_security_group_ids = [aws_security_group.Jenkins-sg.id]
   subnet_id              = aws_subnet.project_public_subnet.id
   user_data              = templatefile("./install_jenkins.sh", {})
