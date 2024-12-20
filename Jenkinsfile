@@ -28,9 +28,7 @@ pipeline {
     stages {
         stage('Setup') {
             steps {
-                git branch: 'main',
-                    url: 'https://github.com/vutd22uit/CICD.git',
-                    shallow: true
+                checkout scm
                 stash includes: '**/*', excludes: 'node_modules/**', name: 'source'
             }
         }
