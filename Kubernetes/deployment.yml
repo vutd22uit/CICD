@@ -17,7 +17,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
       - name: youtube-app
-        image: dhruvdarji123/youtube:latest
+        image: vutd22uit/youtube:latest
         imagePullPolicy: "Always"
         ports:
         - containerPort: 3000
