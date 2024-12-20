@@ -12,6 +12,10 @@ RUN npm install
 
 # Copy the rest of the application code to the working directory
 COPY . .
+# Pass the API Key as a build argument
+ARG REACT_APP_RAPID_API_KEY
+# Set the API Key as an environment variable
+ENV REACT_APP_RAPID_API_KEY=${REACT_APP_RAPID_API_KEY}
 
 # Build the React app
 RUN npm run build
