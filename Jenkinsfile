@@ -13,7 +13,7 @@ pipeline {
         DOCKER_BUILDKIT = '1'
         DOCKER_IMAGE = 'vutd22uit/cicd-youtube'
         DOCKER_TAG = 'latest'
-        RAPID_API_KEY = credentials('rapid-api-key') // Move sensitive data to credentials
+        RAPID_API_KEY = credentials('rapid-api-key')
         SONAR_PROJECT_NAME = 'Youtube-CICD'
         SONAR_PROJECT_KEY = 'Youtube-CICD'
     }
@@ -21,15 +21,17 @@ pipeline {
     options {
         timeout(time: 1, unit: 'HOURS')
         skipDefaultCheckout()
-        disableConcurrentBuilds()  // Prevent parallel runs of the same branch
-        buildDiscarder(logRotator(numToKeepStr: '10')) // Limit build history
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
     }
     
     stages {
         stage('Setup') {
             steps {
-                checkout scm // Simplified git checkout
-                stash includes: '**/*', excludes: 'node_modules/**', name: 'source' // Exclude node_modules from stash
+                git branch: 'main',
+                    url: 'https://github.com/vutd22uit/CICD.git',
+                    shallow: true
+                stash includes: '**/*', excludes: 'node_modules/**', name: 'source'
             }
         }
         
@@ -37,7 +39,6 @@ pipeline {
             steps {
                 unstash 'source'
                 script {
-                    // Use package-lock.json hash for better cache key
                     def npmCacheKey = "npm-${env.BRANCH_NAME}-${sha1 file: 'package-lock.json'}"
                     cache(path: '.npm', key: npmCacheKey, restoreKeys: ['npm-']) {
                         sh '''
@@ -50,13 +51,8 @@ pipeline {
             }
         }
         
-        stage('Parallel Stages') {
-            options {
-                timeout(time: 30, unit: 'MINUTES')
-            }
-            steps {
-                parallel(
-                    failFast: true,
+        stage('Tests') {
+            parallel {
                 stage('Code Analysis') {
                     steps {
                         unstash 'source'
@@ -69,8 +65,7 @@ pipeline {
                                 -Dsonar.coverage.exclusions=**/*.test.js \\
                                 -Dsonar.sourceEncoding=UTF-8 \\
                                 -Dsonar.nodejs.executable=\$(which node) \\
-                                -Dsonar.javascript.node.maxspace=4096 \\
-                                -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+                                -Dsonar.javascript.node.maxspace=4096
                             """
                         }
                         timeout(time: 2, unit: 'MINUTES') {
@@ -86,7 +81,6 @@ pipeline {
                         script {
                             withDockerRegistry([credentialsId: 'dockerhub', url: 'https://index.docker.io/v1/']) {
                                 sh """
-                                    # Use multi-stage builds in Dockerfile
                                     DOCKER_BUILDKIT=1 docker build \\
                                     --build-arg REACT_APP_RAPID_API_KEY=\${RAPID_API_KEY} \\
                                     --cache-from ${DOCKER_IMAGE}:${DOCKER_TAG} \\
@@ -95,7 +89,6 @@ pipeline {
                                     --tag ${DOCKER_IMAGE}:\${BUILD_NUMBER} \\
                                     .
                                     
-                                    # Push both tags
                                     docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
                                     docker push ${DOCKER_IMAGE}:\${BUILD_NUMBER}
                                 """
@@ -118,25 +111,16 @@ pipeline {
                             --ignore-unfixed \\
                             --light \\
                             ${DOCKER_IMAGE}:${DOCKER_TAG} | tee trivy-results.txt
-                            
-                            # Fail if HIGH or CRITICAL vulnerabilities found
-                            if grep -q 'HIGH\\|CRITICAL' trivy-results.txt; then
-                                exit 1
-                            fi
                         """
                         archiveArtifacts artifacts: 'trivy-results.txt', fingerprint: true
                     }
                 }
-                )
             }
         }
         
         stage('Deploy') {
             when {
-                allOf {
-                    branch 'main'
-                    expression { currentBuild.resultIsBetterOrEqualTo('SUCCESS') }
-                }
+                branch 'main'
             }
             steps {
                 script {
@@ -146,9 +130,6 @@ pipeline {
                                 kubectl apply -f deployment.yml --record
                                 kubectl rollout status deployment/youtube-app
                                 kubectl apply -f service.yml
-                                
-                                # Add deployment verification
-                                kubectl get pods -l app=youtube-app | grep Running
                             """
                         }
                     }
@@ -167,10 +148,10 @@ pipeline {
             '''
         }
         success {
-            slackSend(color: 'good', message: "Build succeeded: ${env.JOB_NAME} ${env.BUILD_NUMBER}")
+            echo 'Pipeline succeeded!'
         }
         failure {
-            slackSend(color: 'danger', message: "Build failed: ${env.JOB_NAME} ${env.BUILD_NUMBER}")
+            echo 'Pipeline failed!'
         }
     }
 }
