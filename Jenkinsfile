@@ -1,153 +1,106 @@
 pipeline {
     agent any
-    
     tools {
         jdk 'jdk17'
         nodejs 'node16'
     }
-    
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
-        DOCKER_BUILDKIT = '1'
-        DOCKER_IMAGE = 'vutd22uit/cicd-youtube'
-        DOCKER_TAG = 'latest'
-        RAPID_API_KEY = credentials('rapid-api-key')
-        SONAR_PROJECT_NAME = 'Youtube-CICD'
-        SONAR_PROJECT_KEY = 'Youtube-CICD'
     }
-    
-    options {
-        timeout(time: 1, unit: 'HOURS')
-        skipDefaultCheckout()
-        disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr: '10'))
-    }
-    
     stages {
-        stage('Setup') {
-            steps {
-                checkout scm
-                stash includes: '**/*', excludes: 'node_modules/**', name: 'source'
-            }
-        }
-        
-        stage('Install Dependencies') {
-            steps {
-                unstash 'source'
-                script {
-                    def npmCacheKey = "npm-${env.BRANCH_NAME}-${sha1 file: 'package-lock.json'}"
-                    cache(path: '.npm', key: npmCacheKey, restoreKeys: ['npm-']) {
-                        sh '''
-                            npm ci --prefer-offline --no-audit
-                            npm prune --production
-                        '''
+        // Các stage cần chạy tuần tự đầu tiên
+        stage('Initial Setup') {
+            stages {
+                stage('clean workspace') {
+                    steps {
+                        cleanWs()
                     }
                 }
-                stash includes: 'node_modules/**', name: 'node_modules'
+                stage('Checkout from Git') {
+                    steps {
+                        git branch: 'main', url: 'https://github.com/vutd22uit/CICD.git'
+                    }
+                }
             }
         }
-        
-        stage('Tests') {
+
+        // Các stage có thể chạy song song
+        stage('Parallel Stages') {
             parallel {
+                // Branch 1: Code Analysis
                 stage('Code Analysis') {
-                    steps {
-                        unstash 'source'
-                        withSonarQubeEnv('SonarQube-Server') {
-                            sh """
-                                ${SCANNER_HOME}/bin/sonar-scanner \\
-                                -Dsonar.projectName=${SONAR_PROJECT_NAME} \\
-                                -Dsonar.projectKey=${SONAR_PROJECT_KEY} \\
-                                -Dsonar.scm.disabled=true \\
-                                -Dsonar.coverage.exclusions=**/*.test.js \\
-                                -Dsonar.sourceEncoding=UTF-8 \\
-                                -Dsonar.nodejs.executable=\$(which node) \\
-                                -Dsonar.javascript.node.maxspace=4096
-                            """
+                    stages {
+                        stage("Sonarqube Analysis") {
+                            steps {
+                                withSonarQubeEnv('SonarQube-Server') {
+                                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Youtube-CICD \
+                                    -Dsonar.projectKey=Youtube-CICD '''
+                                }
+                            }
                         }
-                        timeout(time: 2, unit: 'MINUTES') {
-                            waitForQualityGate abortPipeline: true
-                        }
-                    }
-                }
-                
-                stage('Build and Push') {
-                    steps {
-                        unstash 'source'
-                        unstash 'node_modules'
-                        script {
-                            withDockerRegistry([credentialsId: 'dockerhub', url: 'https://index.docker.io/v1/']) {
-                                sh """
-                                    DOCKER_BUILDKIT=1 docker build \\
-                                    --build-arg REACT_APP_RAPID_API_KEY=\${RAPID_API_KEY} \\
-                                    --cache-from ${DOCKER_IMAGE}:${DOCKER_TAG} \\
-                                    --build-arg BUILDKIT_INLINE_CACHE=1 \\
-                                    --tag ${DOCKER_IMAGE}:${DOCKER_TAG} \\
-                                    --tag ${DOCKER_IMAGE}:\${BUILD_NUMBER} \\
-                                    .
-                                    
-                                    docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
-                                    docker push ${DOCKER_IMAGE}:\${BUILD_NUMBER}
-                                """
+                        stage("quality gate") {
+                            steps {
+                                script {
+                                    waitForQualityGate abortPipeline: false, credentialsId: 'SonarQube-Token'
+                                }
                             }
                         }
                     }
                 }
-                
-                stage('Security Scan') {
-                    steps {
-                        unstash 'source'
-                        sh """
-                            mkdir -p .trivycache/
-                            trivy image \\
-                            --cache-dir .trivycache/ \\
-                            --no-progress \\
-                            --exit-code 1 \\
-                            --severity HIGH,CRITICAL \\
-                            --vuln-type os,library \\
-                            --ignore-unfixed \\
-                            --light \\
-                            ${DOCKER_IMAGE}:${DOCKER_TAG} | tee trivy-results.txt
-                        """
-                        archiveArtifacts artifacts: 'trivy-results.txt', fingerprint: true
-                    }
-                }
-            }
-        }
-        
-        stage('Deploy') {
-            when {
-                branch 'main'
-            }
-            steps {
-                script {
-                    dir('Kubernetes') {
-                        withKubeConfig(credentialsId: 'kubernetes') {
-                            sh """
-                                kubectl apply -f deployment.yml --record
-                                kubectl rollout status deployment/youtube-app
-                                kubectl apply -f service.yml
-                            """
+
+                // Branch 2: Build và Dependencies
+                stage('Build Process') {
+                    stages {
+                        stage('Install Dependencies') {
+                            steps {
+                                sh "npm install"
+                            }
+                        }
+                        stage("Docker Build & Push") {
+                            steps {
+                                script {
+                                    withDockerRegistry([credentialsId: 'dockerhub', url: 'https://index.docker.io/v1/']) {   
+                                        sh "docker build --build-arg REACT_APP_RAPID_API_KEY=789733726cmsh6cdce418f9e535ep1c343fjsn62b1b3b24128 -t cicd-youtube ."
+                                        sh "docker tag cicd-youtube vutd22uit/cicd-youtube:latest"
+                                        sh "docker push vutd22uit/cicd-youtube:latest"
+                                    }
+                                }
+                            }
                         }
                     }
                 }
+
+                // Branch 3: Security Scan
+                stage('Security Checks') {
+                    steps {
+                        sh """
+                            trivy image --cache-dir .trivycache/ \
+                            --exit-code 0 \
+                            --no-progress \
+                            --severity HIGH,CRITICAL \
+                            --vuln-type os,library \
+                            --ignore-unfixed \
+                            vutd22uit/cicd-youtube:latest > trivyimage.txt
+                        """
+                        archiveArtifacts artifacts: 'trivyimage.txt', fingerprint: true
+                    }
+                }
             }
         }
-    }
-    
-    post {
-        always {
-            cleanWs()
-            sh '''
-                docker system prune -af --volumes
-                rm -rf .trivycache/
-                rm -rf .npm/
-            '''
-        }
-        success {
-            echo 'Pipeline succeeded!'
-        }
-        failure {
-            echo 'Pipeline failed!'
+
+        // Stage cuối cùng cần chạy tuần tự
+        stage('Deploy to Kubernets') {
+            steps {
+                script {
+                    dir('Kubernetes') {
+                        withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'kubernetes', namespace: '', restrictKubeConfigAccess: false, serverUrl: '') {
+                            sh 'kubectl delete --all pods'
+                            sh 'kubectl apply -f deployment.yml'
+                            sh 'kubectl apply -f service.yml'
+                        }   
+                    }
+                }
+            }
         }
     }
 }
