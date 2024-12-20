@@ -89,18 +89,20 @@ pipeline {
         }
 
         // Stage cuối cùng cần chạy tuần tự
-        stage('Deploy to Kubernets') {
-            steps {
-                script {
-                    dir('Kubernetes') {
-                        withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'kubernetes', namespace: '', restrictKubeConfigAccess: false, serverUrl: '') {
-                            sh 'kubectl delete --all pods'
-                            sh 'kubectl apply -f deployment.yml'
-                            sh 'kubectl apply -f service.yml'
-                        }   
+        stage('Deploy to Kubernetes') {
+    steps {
+        script {
+            dir('Kubernetes') {
+                withAWS(credentials: 'aws-credentials', region: 'us-east-1') {
+                    withKubeConfig(credentialsId: 'kubernetes') {
+                        sh 'kubectl delete --all pods'
+                        sh 'kubectl apply -f deployment.yml'
+                        sh 'kubectl apply -f service.yml'
                     }
                 }
             }
         }
+    }
+}
     }
 }
